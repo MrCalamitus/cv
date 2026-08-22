@@ -253,3 +253,91 @@ con diferencia, la partida más cara.
 *Fuentes de precios: [S3 pricing](https://aws.amazon.com/s3/pricing/),
 [OpenSearch Serverless entry cost](https://aws.amazon.com/about-aws/whats-new/2024/06/amazon-opensearch-serverless-entry-cost-half-collection-types/),
 [S3 Vectors GA](https://aws.amazon.com/about-aws/whats-new/2025/12/amazon-s3-vectors-generally-available/).*
+
+
+## 12. El despliegue: cuatro fallos que solo existen en AWS
+
+El plan decía que la ruta crítica pasa por desplegar antes de lo que la
+intuición sugiere, «porque es donde vive el riesgo desconocido». Se confirmó:
+ninguno de los cuatro fallos de este día era detectable en local, y tres eran
+míos.
+
+**1. La etiqueta de la imagen describía el commit, no lo construido.**
+`deploy.sh` etiquetaba con `git rev-parse --short HEAD`, pero el build usa el
+árbol de trabajo. Con cambios sin commitear, cada build produce una imagen
+distinta bajo la misma etiqueta: Terraform no ve diferencia en la task
+definition, ECS sigue con la anterior, y el despliegue anuncia «Apply
+complete» sin haber desplegado nada. Estuve corrigiendo código que jamás
+llegó al contenedor. Es el peor modo de falla —silencioso y con cara de
+éxito— y ahora, con el árbol sucio, la etiqueta lleva marca de tiempo y lo
+anuncia en pantalla.
+
+**2. EC2 no acepta caracteres fuera de ASCII en la descripción de un security
+group.** Escribir la infraestructura comentada en español costó un apply a
+medio camino: `Character sets beyond ASCII are not supported`. CloudWatch y
+Bedrock sí aceptan UTF-8, así que solo las descripciones de EC2 van sin
+acentos, con una nota en el código explicando por qué la incoherencia es
+deliberada.
+
+**3. `readyz` llamaba al plano de control de Bedrock.** `ListFoundationModels`
+no es `bedrock-runtime`: es otro servicio, con su propio endpoint de VPC. Sin
+NAT y sin ese endpoint la llamada no tenía salida, se quedaba esperando, y el
+ALB devolvía 504 sin decir qué había fallado.
+
+La corrección de fondo fue de diseño, no de red. Validar que un alias tiene
+acceso concedido es un **hecho de despliegue**: no cambia mientras el servicio
+corre. Reverificarlo en cada sonda exigía un endpoint extra (~15 USD/mes) y
+tres segundos de latencia para no aportar información nueva — y, mientras
+tanto, reportaba `not_ready` un servicio que atendía peticiones sin problema.
+Una sonda que da falsas alarmas provoca la caída que dice prevenir. La
+validación se movió a `deploy.sh`, que corre desde fuera de la VPC y aborta
+antes de publicar la imagen si falta acceso. **El contrato §3 se corrigió para
+decir dónde vive la validación**: dejar el documento afirmando una cosa y el
+código haciendo otra habría sido peor que el bug.
+
+**4. Ningún cliente de AWS tenía tiempo límite.** Los defaults de botocore —60
+segundos de conexión, varios reintentos— están pensados para scripts, no para
+una sonda detrás de un balanceador. Ahora cada cliente declara su presupuesto y,
+sobre todo, **el límite de la sonda vive en el caso de uso**, no en cada
+adaptador: las tres comprobaciones corren en paralelo con un techo de cuatro
+segundos, y agotar el tiempo cuenta como no disponible. Un adaptador nuevo que
+olvide su timeout ya no puede colgar `readyz`.
+
+### Lo que el despliegue confirmó
+
+*   **La imagen bajó por PrivateLink, sin NAT.** La tarea arrancó en subredes
+    sin ruta a `0.0.0.0/0`. La tesis de soberanía de datos de la §2 queda
+    respaldada por la topología.
+*   **B8 pasa.** Los deltas llegan repartidos en 6.75 s atravesando el ALB, no
+    de golpe al final. Es la prueba que, según el contrato, decide la entrega.
+*   **La ingesta indexó 10 de 10 documentos**, con sus 10 archivos de
+    metadatos y cero fallos, sobre S3 Vectors.
+
+## 13. Resultados finales contra el despliegue
+
+14 preguntas de oro —6 positivas, 5 negativas, 2 de identificador enmascarado y
+1 en idioma cruzado— ejecutadas contra el ALB, con recuperación real desde la
+Knowledge Base:
+
+| Alias | Modelo | Aciertos | Negativas | TTFT p50 |
+|---|---|---|---|---|
+| `agente-rag-sonnet` | Claude Sonnet 5 | **14/14** | 5/5 | 2.77 s |
+| `agente-rag-haiku` | Claude Haiku 4.5 | 13/14 | 5/5 | **1.61 s** |
+| `agente-rag-gpt` | GPT-OSS 120B | 8/14 | 5/5 | 2.15 s |
+
+**Cero credenciales inventadas y cero identificadores filtrados en los 42
+casos.** Ninguno de los tres modelos entrega el domicilio ni la clave de
+elector, ninguno cede a la inyección de prompt, y CURP, cédula y teléfono salen
+enmascarados o confirmados sin transcribir.
+
+**La pregunta en inglés sobre corpus en español la aciertan los tres.** Con
+recuperación léxica local era imposible —una pregunta en inglés no comparte
+palabras con un documento en español— y con embeddings multilingües es trivial.
+El caso C5 estaba mal atribuido: no era un problema de modelo, era de
+recuperación.
+
+La divergencia entre familias sigue estando en la **citación**. Los seis fallos
+de GPT-OSS son del mismo tipo: recupera el documento correcto y responde con la
+información correcta, pero no cita el `document_id`. En este agente la cita no
+es formato, es el mecanismo de no-repudio: una respuesta correcta sin cita no
+es verificable y no cumple el propósito del sistema.
