@@ -32,8 +32,8 @@ Ya no se discuten. Cambiar alguna implica revisar este plan.
 
 | # | Decisión | Bloquea | Cuándo se resuelve |
 |---|---|---|---|
-| A | Terraform vs CDK | E0 | Antes de escribir IaC. **Default asumido: Terraform** |
-| B | Vector store de la KB | E3 | Al crear la KB. Ver nota de costo en E3 |
+| A | ~~Terraform vs CDK~~ | — | **Cerrada: Terraform.** `infra/` escrito y validado |
+| B | ~~Vector store de la KB~~ | — | **Cerrada: S3 Vectors.** Comparación en bitácora §11 |
 | C | Las 20 preguntas de oro | E7 | Cuando el corpus esté cargado |
 | D | Fecha límite de entrega | Alcance de E6–E8 | Ahora mismo, idealmente |
 

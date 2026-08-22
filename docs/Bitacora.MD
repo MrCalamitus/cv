@@ -90,3 +90,166 @@ desplegar mientras el corpus se prepara.
 Se hace una busqueda en la computadora de certificados, CVs viejos y documentos profesionales o escolares, al terminar esta etapa se hace uso de Gemini para ayduar a complementar la información.
 
 Llenando la info del perfil, me encontré que mucho era lo que yo digo, así que decidí buscar una forma de sacar las STATS de mi perfil de gitHub para tener la fuente de la verdad, ya no es lo que yo digo si no una fuente de datos fiable [Stats-github](stats-github.md)
+
+Para evitar subir archivos personales a la nube, solo se subieron arhivos MD, preverificados y parseados con algunos scripts de pyhton. Y se 
+
+
+## 8. Bedrock en local: lo que solo se aprende contra la API real
+
+Con el contrato verificado y el corpus preparado, conecté la inferencia real
+antes de tener infraestructura: mismo endpoint, misma suite, cambiando una
+variable de entorno. Dos cosas aparecieron de inmediato, y ninguna estaba en la
+documentación que había leído:
+
+*   **Los modelos de Anthropic en Bedrock no se invocan por su ID base.**
+    `anthropic.claude-sonnet-5` responde *"on-demand throughput isn't
+    supported"*; hay que usar el perfil de inferencia regional
+    (`us.anthropic.claude-sonnet-5`). Un default equivocado que, de haber
+    llegado al despliegue, habría fallado solo en producción.
+*   **`temperature` está deprecado en Claude Sonnet 5** y devuelve
+    `ValidationException`. Haiku 4.5 y la familia GPT siguen aceptándola. No lo
+    resolví con un `try/except`: el descriptor de modelo declara
+    `supports_sampling`, el adaptador solo envía el parámetro cuando el modelo
+    lo acepta, y si un cliente lo manda a un alias que no lo soporta recibe un
+    400 con `param: "temperature"`. Aceptarlo y descartarlo en silencio sería
+    mentir sobre lo que el servidor hizo con la petición.
+
+Esto valida la nota del plan E1: *trabajar contra las dos familias desde el
+principio, porque las diferencias son baratas de absorber ahora y caras en el
+despliegue*.
+
+## 9. Comparación entre familias de modelo
+
+13 preguntas de oro sobre el corpus real —6 positivas, 5 negativas y 2 de
+identificador enmascarado— contra los tres alias:
+
+| Alias | Modelo | Aciertos | Negativas | TTFT p50 | Total medio |
+|---|---|---|---|---|---|
+| `agente-rag-sonnet` | Claude Sonnet 5 | **13/13** | 5/5 | 1.75 s | 3.74 s |
+| `agente-rag-haiku` | Claude Haiku 4.5 | 12/13 | 5/5 | **0.83 s** | 1.84 s |
+| `agente-rag-gpt` | GPT-OSS 120B | 7/13 | 5/5 | 2.10 s | 2.60 s |
+
+**Cero credenciales inventadas y cero identificadores filtrados en los 39
+casos.** Las tres familias niegan correctamente lo que no consta, resisten la
+inyección de prompt y no transcriben CURP, cédula ni teléfono.
+
+Donde divergen es en la **convención de citación**. Los seis fallos de GPT-OSS
+son todos del mismo tipo: recupera el documento correcto y responde con la
+información correcta, pero no cita el `document_id` entre corchetes. Para este
+agente eso no es un detalle de formato: la cita *es* el mecanismo de
+no-repudio. Una respuesta correcta sin cita no es verificable, y por tanto no
+sirve al propósito del sistema.
+
+La conclusión práctica es que el valor multi-proveedor de Open Responses tiene
+un límite honesto: el protocolo se puede cumplir con cualquier familia, pero
+las garantías de producto —citar la evidencia— dependen de qué tan bien sigue
+instrucciones el modelo, y eso hay que medirlo, no suponerlo. Sonnet 5 queda
+como default por exactitud; Haiku 4.5 es la opción de baja latencia con un
+TTFT menos de la mitad, a cambio de un fallo de citación en trece preguntas.
+
+**Lo que esta medición todavía no cubre:** son 13 preguntas, no las 20 del
+plan, y la recuperación es local, no la Knowledge Base. Ambas cosas cambian los
+números y deben volver a correrse cuando E3 esté cerrado.
+
+
+## 10. Infraestructura: renunciar al NAT Gateway a propósito
+
+Al escribir la red apareció una decisión con dinero de por medio. Una tarea de
+Fargate en subred privada necesita salida para tres cosas: bajar su imagen de
+ECR, leer el token de Secrets Manager y hablar con Bedrock. Hay dos formas.
+
+*   **NAT Gateway:** una sola pieza, unos 32 USD/mes más tráfico, y funciona
+    para todo sin configurar nada. Pero el tráfico hacia Bedrock sale a
+    internet público y vuelve.
+*   **VPC endpoints (PrivateLink):** seis endpoints de interfaz —
+    `bedrock-runtime`, `bedrock-agent-runtime`, `ecr.api`, `ecr.dkr`,
+    `secretsmanager`, `logs`— más el gateway de S3, que es gratis. Unos 0.01
+    USD/hora por endpoint y por zona: con dos zonas, del orden de 90–105
+    USD/mes. Es la partida más cara de esta infraestructura, más que el ALB y
+    más que el cómputo.
+
+**Decisión: endpoints, y sin NAT.** La §2 de esta bitácora descartó un router
+de modelos externo por no exponer datos a internet público. Con NAT, la llamada
+a Bedrock saldría exactamente por ahí y el argumento se caería solo. Con
+endpoints, la tabla de rutas privada no tiene ruta a `0.0.0.0/0`: no es que el
+tráfico *no vaya* a internet, es que *no puede*. La tesis queda respaldada por
+la topología, no por la narrativa.
+
+El costo es real y no lo escondo: si el presupuesto apretara, la palanca
+correcta es desplegar los endpoints en una sola zona (la mitad del gasto,
+a cambio de perder tolerancia a fallo de zona en la salida), no volver al NAT.
+
+**Otras dos decisiones que merecen nombre:**
+
+*   **Permisos de Bedrock con perfiles de inferencia.** Un perfil `us.` enruta
+    a varias regiones, así que la política necesita el ARN del perfil *y* el
+    del modelo base en cada región destino. Si falta una, la invocación falla
+    de forma intermitente y solo bajo carga — el peor modo de fallo posible.
+*   **Métricas por filtro de logs, no por código.** La aplicación ya emite
+    `ttft_ms`, `chunks_retrieved` y `grounding.failure` en JSON estructurado.
+    Los filtros de CloudWatch los convierten en métricas sin añadir una sola
+    llamada a `PutMetricData` en la ruta de la petición. La alarma del p95 de
+    TTFT y la de fundamentación salen de ahí.
+
+La guarda de cuenta se probó a propósito con un perfil de otra cuenta: el
+provider corta con *"AWS account ID not allowed"* y `deploy.sh` aborta antes de
+llegar a Terraform.
+
+
+## 11. Decisión B: el vector store, o cómo no pagar 350 USD al mes por diez documentos
+
+Esta era la decisión con más dinero en juego del proyecto, y la que el plan
+marcaba como bloqueante de E3.
+
+**El problema.** Bedrock Knowledge Bases necesita un almacén vectorial. La
+opción por defecto —la que la consola sugiere y casi todos los tutoriales
+usan— es **OpenSearch Serverless**, que factura *OpenSearch Compute Units*
+corriendo de forma continua, existan o no consultas. Ese piso es independiente
+del tamaño del corpus.
+
+**Los números** (us-east-1, precios de agosto de 2026):
+
+| Opción | Modelo de cobro | Costo con este corpus |
+|---|---|---|
+| OpenSearch Serverless (colección clásica) | 0.24 USD por OCU-hora, mínimo 2 OCU | ~350 USD/mes |
+| OpenSearch Serverless (dev/test, sin redundancia) | mínimo 1 OCU | ~175 USD/mes |
+| Aurora Serverless v2 con pgvector | ~0.06 USD por ACU-hora, mínimo 0.5 ACU | ~44 USD/mes |
+| **S3 Vectors** | 0.06 USD/GB-mes + 0.20 USD/GB de escritura + consultas por TB procesado | **céntimos al mes** |
+
+Este corpus son 10 documentos, un fragmento cada uno (decisión de chunking de
+E2). Diez vectores de 1024 dimensiones en float32 son unos 41 KB. El
+almacenamiento cuesta, literalmente, una fracción de céntimo; las consultas de
+una demo, otra fracción. Frente a ello, cualquier opción con piso de cómputo
+significa **pagar una infraestructura de búsqueda dimensionada para millones de
+vectores con el fin de indexar diez archivos**.
+
+**Decisión: S3 Vectors.** No por ser lo más barato, sino porque es lo único
+cuyo modelo de cobro guarda proporción con el problema: se paga por lo que se
+guarda y por lo que se consulta, y con un corpus pequeño eso tiende a cero.
+
+**Lo que se acepta a cambio, dicho sin adornos:**
+
+*   Menor rendimiento en consultas de altísimo volumen. No es el caso de uso:
+    un agente sobre un CV recibe consultas esporádicas.
+*   Ecosistema más joven que OpenSearch, con menos material de referencia.
+*   **El argumento del piso ya no es universal:** las colecciones *NextGen* de
+    OpenSearch Serverless no tienen mínimo de OCU y escalan a cero tras diez
+    minutos de inactividad. Para un corpus pequeño S3 Vectors sigue siendo más
+    simple y más barato, pero sería deshonesto presentar OpenSearch como
+    necesariamente caro sin esa aclaración.
+
+**Cuándo revisar esta decisión.** Si el corpus creciera a millones de vectores
+con consultas constantes, o si hicieran falta filtros complejos, búsqueda
+híbrida léxico-vectorial o agregaciones, la comparación se invierte y
+OpenSearch vuelve a ser la respuesta correcta. Con diez documentos, no lo es.
+
+**Efecto en la infraestructura:** el módulo `bedrock.tf` crea el bucket del
+corpus, el bucket vectorial, el índice (1024 dimensiones, distancia coseno), el
+rol de la KB con condiciones anti-*confused deputy*, la Knowledge Base y su
+origen de datos con `chunking_strategy = "NONE"`. El plan pasa de 54 a 65
+recursos y el costo fijo mensual no se mueve: los VPC endpoints siguen siendo,
+con diferencia, la partida más cara.
+
+*Fuentes de precios: [S3 pricing](https://aws.amazon.com/s3/pricing/),
+[OpenSearch Serverless entry cost](https://aws.amazon.com/about-aws/whats-new/2024/06/amazon-opensearch-serverless-entry-cost-half-collection-types/),
+[S3 Vectors GA](https://aws.amazon.com/about-aws/whats-new/2025/12/amazon-s3-vectors-generally-available/).*
