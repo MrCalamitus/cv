@@ -83,3 +83,10 @@ evidente: que el agente conteste igual, pero inventando.
 Un caso de prueba deja constancia de la propiedad: con el corpus vacío, el
 agente se queda sin evidencia y declina. Es la condición que hace seguro
 desplegar mientras el corpus se prepara.
+
+
+## 8. Recopilar información relevante de Luis Alberto Ortiz Meza y su trayectoría profesional
+
+Se hace una busqueda en la computadora de certificados, CVs viejos y documentos profesionales o escolares, al terminar esta etapa se hace uso de Gemini para ayduar a complementar la información.
+
+Llenando la info del perfil, me encontré que mucho era lo que yo digo, así que decidí buscar una forma de sacar las STATS de mi perfil de gitHub para tener la fuente de la verdad, ya no es lo que yo digo si no una fuente de datos fiable [Stats-github](stats-github.md)
