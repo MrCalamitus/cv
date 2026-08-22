@@ -31,3 +31,55 @@ No quería entregar una "caja negra". La observabilidad fue definida desde el di
 
 ## Conclusión
 Cada decisión tomada buscó el equilibrio entre **rigor técnico bancario** y **velocidad de entrega**. Este diseño no solo resuelve el reto, sino que crea un modelo base auditable, seguro y profesional, listo para ser escalado a producción.
+
+## 6. La forma del código: arquitectura hexagonal
+
+Con el contrato escrito y la ingesta del corpus todavía por delante, apareció
+una pregunta de secuencia: ¿se construye el endpoint *después* de tener la
+Knowledge Base, o se construye antes y se conecta luego?
+
+*   **Hipótesis inicial:** una estructura plana (`app/main.py`, `app/retrieval.py`,
+    `app/inference.py`) llamando a `boto3` directamente. Es lo más corto de
+    escribir y lo que sugería el boceto del plan.
+*   **Descarte:** esa forma ata la verificación del contrato a que exista
+    infraestructura. Sin KB creada no hay recuperación, sin recuperación no hay
+    respuesta, y sin respuesta no se puede probar el emisor de eventos SSE —que
+    es la parte más delicada y la que más barato sale arreglar temprano.
+    Además obliga a parchear (`mock.patch`) para probar cualquier cosa, y un
+    parche prueba la implementación, no el comportamiento.
+*   **Decisión final:** **puertos y adaptadores**. El núcleo (dominio +
+    aplicación) declara qué necesita —recuperar evidencia, generar texto,
+    resolver un alias, medir— y la infraestructura lo cumple. Hoy lo cumplen un
+    corpus local y un modelo determinista; mañana, Bedrock Knowledge Base y
+    `ConverseStream`, cambiando una variable de entorno.
+*   **Costo asumido:** más archivos y una indirección extra. Se justifica porque
+    la frontera coincide con lo que de verdad va a cambiar (el proveedor de
+    recuperación y el de inferencia) y con lo que hay que poder probar sin nube.
+    En un CRUD sería sobreingeniería; aquí es lo que permite entregar por partes.
+
+El resultado medible: la suite de aceptación completa —contrato, recuperación,
+veracidad y operación— corre en segundos sin credenciales de AWS, y los
+adaptadores de Bedrock ya están ejercitados con clientes falsos antes de su
+primera llamada real.
+
+## 7. Entregar con el RAG pendiente sin mentir
+
+Tener el servicio en pie antes de que el corpus esté cargado plantea un riesgo
+evidente: que el agente conteste igual, pero inventando.
+
+*   **Decisión:** que la ausencia de evidencia produzca **silencio, no relleno**.
+    Sin fragmentos recuperados, la respuesta correcta —y la única posible— es
+    "eso no consta en los documentos disponibles".
+*   **Cómo se sostiene:** el sustituto local del modelo no genera lenguaje;
+    compone la respuesta a partir de los fragmentos y declina cuando la pregunta
+    menciona algo que no aparece en ellos. Es deliberadamente tonto: así las
+    pruebas miden el emisor de eventos, el enmascarado y la orquestación, y no
+    la suerte de un modelo.
+*   **Lo que esto todavía no prueba:** la veracidad de un modelo generativo
+    real. Eso se mide con las preguntas de oro contra Bedrock (E7), y está
+    declarado como tal en la suite: los casos que exigen un modelo real se
+    saltan con motivo visible en el reporte, en vez de desaparecer.
+
+Un caso de prueba deja constancia de la propiedad: con el corpus vacío, el
+agente se queda sin evidencia y declina. Es la condición que hace seguro
+desplegar mientras el corpus se prepara.

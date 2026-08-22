@@ -47,21 +47,20 @@ luis-cv/
 ├── BITACORA.md                    # se actualiza al cerrar cada etapa
 ├── docs/
 │   ├── contrato-open-responses.md # el contrato normativo
-│   └── arquitectura.md            # diagrama + justificaciones
-├── app/
-│   ├── main.py                    # FastAPI, rutas /v1/responses /healthz /readyz
-│   ├── schema.py                  # modelos Pydantic del contrato
-│   ├── events.py                  # emisor SSE, sequence_number, [DONE]
-│   ├── models.py                  # mapa de alias → IDs de Bedrock
-│   ├── retrieval.py               # bedrock-agent-runtime retrieve()
-│   ├── inference.py               # bedrock-runtime converse_stream()
-│   ├── prompts.py                 # system prompt, plantilla de contexto
-│   ├── errors.py                  # objeto de error, mapeo a HTTP
-│   ├── redaction.py               # enmascarado de PII en salida y en logs
-│   └── telemetry.py               # logs JSON, métricas, subsegmentos X-Ray
+│   └── arquitectura.md            # capas, puertos y adaptadores
+├── src/luis_cv/                   # arquitectura hexagonal
+│   ├── domain/                    # reglas puras: prompts, redacción, eventos
+│   ├── application/               # casos de uso y puertos
+│   ├── infrastructure/
+│   │   ├── inbound/http/          # FastAPI, esquema, SSE, auth, rate limit
+│   │   └── outbound/              # bedrock/ · local/ · telemetry/
+│   └── main.py                    # uvicorn luis_cv.main:app
 ├── tests/
-│   ├── test_contract.py           # casos A y B del contrato
-│   ├── test_rag.py                # casos C
+│   ├── contract/                  # casos A y B del contrato
+│   ├── rag/                       # casos C
+│   ├── operation/                 # casos D
+│   ├── unit/                      # dominio, adaptadores y guardas de capas
+│   ├── deployed/                  # la misma aceptación contra el ALB
 │   └── golden.yaml                # preguntas de oro + respuestas esperadas
 ├── infra/
 │   ├── main.tf  variables.tf  outputs.tf  locals.tf
@@ -73,11 +72,18 @@ luis-cv/
 ├── scripts/
 │   ├── deploy.sh                  # guarda de cuenta + build + push + apply
 │   ├── sync-kb.sh                 # subir corpus e iniciar ingesta
+│   ├── eval.py                    # preguntas de oro y reporte comparativo
 │   └── smoke.sh                   # verificación rápida contra el desplegado
 ├── Dockerfile
 ├── Makefile
 └── .gitignore                     # corpus/, .env, *.tfstate, *.tfvars
 ```
+
+La estructura plana `app/*.py` del boceto inicial se sustituyó por capas
+(`domain` / `application` / `infrastructure`). El motivo está en
+`arquitectura.md`: con la ingesta del RAG pendiente, poder sustituir la
+recuperación y la inferencia por adaptadores locales es lo que permite tener el
+contrato verificado antes de que exista la Knowledge Base.
 
 `corpus/` fuera de git no es negociable: son documentos de identidad. Que estén
 en un repo, aunque sea privado, es una superficie de exposición innecesaria.
