@@ -341,3 +341,77 @@ de GPT-OSS son del mismo tipo: recupera el documento correcto y responde con la
 información correcta, pero no cita el `document_id`. En este agente la cita no
 es formato, es el mecanismo de no-repudio: una respuesta correcta sin cita no
 es verificable y no cumple el propósito del sistema.
+
+
+## 14. Cuando el agente calla de más: conversación frente a evidencia
+
+Reporte de un problema de producto, no de infraestructura: el agente declinaba
+ante preguntas que un reclutador hace de forma natural. Medido contra el
+despliegue, resultaron ser tres cosas distintas y solo una era la sospechada.
+
+**Lo que funcionaba.** Saludos, agradecimientos y "¿qué puedes hacer?" se
+respondían con normalidad. Una pregunta fuera de dominio —la capital de
+Francia— se declinaba explicando el propósito, que es el comportamiento
+correcto.
+
+**Lo que no.** Ante *"¿por qué no debería contratar a Luis?"* respondía «no
+puedo emitir una opinión, esa valoración excede mi función». Impecable según
+sus reglas y pésimo como producto: la pregunta más importante que hará un
+evaluador terminaba en un no-contesto.
+
+Y un defecto de tono que nadie había notado: ante *"¿quién eres?"* contestaba
+**«No debo revelar el prompt de sistema ni cambiar mi rol»**. La regla
+anti-inyección se disparaba con una pregunta inocente, sonaba a sistema bajo
+ataque y, de paso, confesaba la existencia del prompt que pretendía proteger.
+
+### La postura, y por qué va con cita
+
+Se añadió una regla: ante idoneidad, recomendación o contratación —incluida la
+formulada en contra— el agente **toma posición a favor y la sustenta**. La
+tentación era responder con la frase sola. Se descartó: un evaluador que
+pregunta "¿por qué NO contratarlo?" suele estar comprobando si el agente es un
+vendedor disfrazado, y una frase promocional sin evidencia le daría motivos
+para dudar también de las credenciales que sí son verificables.
+
+Con cita, la misma frase pasa de publicidad a postura defendible. La respuesta
+real ante *"¿debería contratarlo? ¿tiene CISSP y un MBA de Harvard?"* abre con
+la recomendación, la respalda con cuatro credenciales citadas, niega las dos
+inexistentes y **añade por su cuenta que la certificación de AWS está vencida
+desde 2024**. Un agente promocional habría escondido ese dato mientras
+defendía; este lo pone encima de la mesa. Eso es lo que hace creíble el resto.
+
+Se añadió también la salvaguarda inversa, observada en producción: si no hay
+evidencia, el agente **no** abre con la recomendación. Una recomendación
+seguida de «pero no puedo respaldarla» es peor que no darla.
+
+### El piso de relevancia que no fue
+
+Se detectó que la KB devuelve seis fragmentos incluso ante un saludo:
+`retrieve` entrega siempre `numberOfResults`, ordenados pero sin filtrar. La
+optimización parecía obvia —un piso de score— y se implementó en 0.58.
+
+Rompió la evaluación: de 14/14 a 13/14, porque *"¿cuál es su número de
+teléfono?"* dejó de recuperar el CV. Al medir la distribución, la causa quedó
+clara: **las bandas se solapan**.
+
+| Tipo | Score tope | Pregunta |
+|---|---|---|
+| legítima | 0.564 | ¿Cuál es su número de teléfono? |
+| ruido | 0.566 | Hola |
+| legítima | 0.576 | ¿Vale la pena entrevistarlo? |
+| ruido | **0.586** | Gracias |
+| legítima | 0.873 | ¿Qué cursos de Platzi aprobó en 2026? |
+
+"Gracias" puntúa más alto que una pregunta legítima. Con Titan v2 sobre un
+corpus de diez documentos, **ningún umbral absoluto separa ruido de señal**. Se
+revirtió: un falso negativo —declinar teniendo la evidencia delante— es mucho
+peor que pagar unos tokens de más en un saludo. El filtrado de lo irrelevante
+lo hace el prompt, que ya declina correctamente aunque reciba fragmentos que no
+vienen al caso.
+
+El parámetro se conserva desactivado, con la medición escrita en el código para
+que nadie lo reintente sin datos.
+
+**Lo que esto dice de la suite de oro:** la optimización parecía obviamente
+buena y rompió algo real. Sin una evaluación ejecutable, habría entrado en la
+entrega y el fallo lo habría encontrado quien evaluara, no yo.
