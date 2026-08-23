@@ -29,9 +29,6 @@ No quería entregar una "caja negra". La observabilidad fue definida desde el di
 *   **Decisión:** Integrar **CloudWatch** y **X-Ray**. 
 *   **Justificación:** Esto me permite trazar el camino de una pregunta desde que entra por el ALB, pasa por mi código, llega a Bedrock y vuelve. Es la herramienta necesaria para identificar cuellos de botella y auditar la calidad del RAG en tiempo real, demostrando un enfoque de "Operaciones" (LLMOps) desde el día uno.
 
-## Conclusión
-Cada decisión tomada buscó el equilibrio entre **rigor técnico bancario** y **velocidad de entrega**. Este diseño no solo resuelve el reto, sino que crea un modelo base auditable, seguro y profesional, listo para ser escalado a producción.
-
 ## 6. La forma del código: arquitectura hexagonal
 
 Con el contrato escrito y la ingesta del corpus todavía por delante, apareció
@@ -94,7 +91,7 @@ Llenando la info del perfil, me encontré que mucho era lo que yo digo, así que
 Para evitar subir archivos personales a la nube, solo se subieron arhivos MD, preverificados y parseados con algunos scripts de pyhton. Y se 
 
 
-## 8. Bedrock en local: lo que solo se aprende contra la API real
+## 9. Bedrock en local: lo que solo se aprende contra la API real
 
 Con el contrato verificado y el corpus preparado, conecté la inferencia real
 antes de tener infraestructura: mismo endpoint, misma suite, cambiando una
@@ -118,7 +115,7 @@ Esto valida la nota del plan E1: *trabajar contra las dos familias desde el
 principio, porque las diferencias son baratas de absorber ahora y caras en el
 despliegue*.
 
-## 9. Comparación entre familias de modelo
+## 10. Comparación entre familias de modelo
 
 13 preguntas de oro sobre el corpus real —6 positivas, 5 negativas y 2 de
 identificador enmascarado— contra los tres alias:
@@ -152,7 +149,7 @@ plan, y la recuperación es local, no la Knowledge Base. Ambas cosas cambian los
 números y deben volver a correrse cuando E3 esté cerrado.
 
 
-## 10. Infraestructura: renunciar al NAT Gateway a propósito
+## 11. Infraestructura: renunciar al NAT Gateway a propósito
 
 Al escribir la red apareció una decisión con dinero de por medio. Una tarea de
 Fargate en subred privada necesita salida para tres cosas: bajar su imagen de
@@ -196,7 +193,7 @@ provider corta con *"AWS account ID not allowed"* y `deploy.sh` aborta antes de
 llegar a Terraform.
 
 
-## 11. Decisión B: el vector store, o cómo no pagar 350 USD al mes por diez documentos
+## 12. Decisión B: el vector store, o cómo no pagar 350 USD al mes por diez documentos
 
 Esta era la decisión con más dinero en juego del proyecto, y la que el plan
 marcaba como bloqueante de E3.
@@ -255,7 +252,7 @@ con diferencia, la partida más cara.
 [S3 Vectors GA](https://aws.amazon.com/about-aws/whats-new/2025/12/amazon-s3-vectors-generally-available/).*
 
 
-## 12. El despliegue: cuatro fallos que solo existen en AWS
+## 13. El despliegue: cuatro fallos que solo existen en AWS
 
 El plan decía que la ruta crítica pasa por desplegar antes de lo que la
 intuición sugiere, «porque es donde vive el riesgo desconocido». Se confirmó:
@@ -313,7 +310,7 @@ olvide su timeout ya no puede colgar `readyz`.
 *   **La ingesta indexó 10 de 10 documentos**, con sus 10 archivos de
     metadatos y cero fallos, sobre S3 Vectors.
 
-## 13. Resultados finales contra el despliegue
+## 14. Resultados finales contra el despliegue
 
 14 preguntas de oro —6 positivas, 5 negativas, 2 de identificador enmascarado y
 1 en idioma cruzado— ejecutadas contra el ALB, con recuperación real desde la
@@ -343,7 +340,7 @@ es formato, es el mecanismo de no-repudio: una respuesta correcta sin cita no
 es verificable y no cumple el propósito del sistema.
 
 
-## 14. Cuando el agente calla de más: conversación frente a evidencia
+## 15. Cuando el agente calla de más: conversación frente a evidencia
 
 Reporte de un problema de producto, no de infraestructura: el agente declinaba
 ante preguntas que un reclutador hace de forma natural. Medido contra el
@@ -415,3 +412,25 @@ que nadie lo reintente sin datos.
 **Lo que esto dice de la suite de oro:** la optimización parecía obviamente
 buena y rompió algo real. Sin una evaluación ejecutable, habría entrado en la
 entrega y el fallo lo habría encontrado quien evaluara, no yo.
+
+---
+
+## Conclusión
+
+Cada decisión tomada buscó el equilibrio entre **rigor técnico bancario** y
+**velocidad de entrega**. Este diseño no solo resuelve el reto: crea un modelo
+base auditable, seguro y profesional.
+
+Y dejó de ser un diseño. El agente está **desplegado en AWS**, responde citando
+los documentos que sustentan cada afirmación, y las dos pruebas que el contrato
+declaró decisivas —streaming sin buffering tras el balanceador y cero
+credenciales inventadas— pasan contra el despliegue, no solo en local.
+
+Lo que queda pendiente está en la §1 de este documento en forma de lista, no
+escondido: HTTPS en el balanceador, un token con caducidad real, el guardrail
+administrado y las trazas distribuidas. Ninguno es un descubrimiento tardío.
+
+Si algo resume el proyecto es la sección 15: una optimización que parecía
+obviamente buena rompió una respuesta correcta, y la suite de evaluación lo
+detectó antes que nadie. Esa es la diferencia entre un sistema que afirma ser
+confiable y uno que puede demostrarlo.

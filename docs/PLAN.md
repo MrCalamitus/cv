@@ -33,7 +33,7 @@ Ya no se discuten. Cambiar alguna implica revisar este plan.
 | # | Decisión | Bloquea | Cuándo se resuelve |
 |---|---|---|---|
 | A | ~~Terraform vs CDK~~ | — | **Cerrada: Terraform.** `infra/` escrito y validado |
-| B | ~~Vector store de la KB~~ | — | **Cerrada: S3 Vectors.** Comparación en bitácora §11 |
+| B | ~~Vector store de la KB~~ | — | **Cerrada: S3 Vectors.** Comparación en bitácora §12 |
 | C | Las 20 preguntas de oro | E7 | Cuando el corpus esté cargado |
 | D | Fecha límite de entrega | Alcance de E6–E8 | Ahora mismo, idealmente |
 
@@ -323,7 +323,26 @@ endpoints, porque sin ellos la tesis de la bitácora es falsa.
 
 ---
 
+## Estado de ejecución
+
+| Etapa | Estado |
+|---|---|
+| E0 — Fundaciones | ✅ guarda de cuenta probada a propósito con un perfil de otra cuenta |
+| E1 — Endpoint local, contrato completo | ✅ casos A y B en verde, en local y contra el ALB |
+| E2 — Preparación del corpus | ✅ 10 documentos normalizados, con metadatos y manifiesto |
+| E3 — Knowledge Base e ingesta | ✅ S3 Vectors desplegado, 10 de 10 documentos indexados |
+| E4 — Prompt, veracidad y redacción | ✅ 25 casos C contra el modelo real; falta el guardrail administrado |
+| E5 — Contenedor y despliegue | ✅ ECS Fargate tras ALB; **B8 pasa** contra el balanceador |
+| E6 — Observabilidad | ◐ logs, métricas, panel y alarmas; falta X-Ray y notificación |
+| E7 — Evaluación | ◐ 14 preguntas medidas contra los tres alias; el plan contempla 20 |
+| E8 — Entrega | ◐ documentación al día; falta HTTPS y verificar `destroy` |
+
 ## Siguiente acción
 
-Resolver la decisión A (Terraform o CDK) y arrancar E0 y E2 en paralelo: el
-scaffolding del repo mientras se verifican los PDFs.
+**HTTPS en el balanceador.** Es la única brecha que impide compartir el
+endpoint con alguien: hoy el token *Bearer* viaja en claro. El listener ya está
+escrito y se activa poniendo un ARN de ACM en `terraform.tfvars`.
+
+Después, por orden de valor: cerrar la decisión C con las seis preguntas de oro
+que faltan, el guardrail administrado de Bedrock como segunda red de seguridad,
+y los subsegmentos de X-Ray para cerrar E6.
