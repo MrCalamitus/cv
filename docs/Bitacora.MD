@@ -539,6 +539,152 @@ configuración.
 
 ---
 
+## 17. El PDF que no se deja leer
+
+Del corpus de coches, 30 de 131 PDF no daban texto. El pipeline los reportaba y
+seguía, que es honesto pero deja fuera a marcas enteras: sin ellos, el agente
+declinaba para siempre cualquier pregunta sobre MG, BYD o Kia y nadie sabría por
+qué. Antes de escribir OCR conviene mirar **por qué** no se dejan leer, porque
+resultaron ser tres problemas distintos con tres soluciones de coste muy
+distinto.
+
+| Causa | Documentos | Solución |
+|---|---|---|
+| Cifrado AES con contraseña de propietario vacía | 6 | `decrypt("")` |
+| PDF de imagen (el texto es un mapa de bits) | 23 | Transcripción |
+| Archivo de 0 bytes | 1 | Reportarlo |
+
+Los seis cifrados eran el rescate más barato que existe: restringían copiar e
+imprimir, no leer, y su capa de texto estaba entera. Añadir `pypdf[crypto]` y
+una línea devolvió 98.000 caracteres de especificaciones reales sin transcribir
+nada. Vale la pena decirlo porque el instinto era empezar por el OCR.
+
+### El caso que obliga a pensar: la ficha comparativa
+
+Los 23 restantes no son escaneos de un documento de prosa. Son esto:
+
+```
+                              COOL MT   STYLE MT   STYLE CVT   EXCITE CVT
+Potencia máxima neta (HP)            108 HP @ 4,500 rpm
+Transmisión                    MT (5 vel.)        CVT (8 vel. simuladas)
+Quemacocos eléctrico                                              •
+```
+
+Un OCR lineal —tesseract sobre la página— devuelve las etiquetas y **pierde los
+valores y las columnas**. El resultado no es incompleto: es peligroso. Aplanada,
+esa tabla dice que el MG3 lleva quemacocos. Lo lleva **una** de sus cuatro
+versiones. El agente lo citaría con toda propiedad y estaría afirmando algo
+falso, que es exactamente lo que este proyecto existe para evitar, y lo que la
+primera regla del perfil `coches` prohíbe por escrito.
+
+Así que el requisito no era «sacar texto»: era **conservar la rejilla**.
+
+### Textract, y las dos cosas que Textract no resuelve
+
+`AnalyzeDocument` con `TABLES` devuelve celdas con fila, columna y geometría, y
+lee los acentos del español correctamente (97% de confianza media sobre este
+corpus). Pero quedaban dos huecos, y los dos se cerraron con la geometría que el
+propio servicio devuelve:
+
+**1. Las viñetas no son texto.** El «•» de una ficha es un adorno tipográfico,
+no una casilla de selección, así que Textract devuelve la celda vacía y la fila
+entera desaparece. Se detectan midiendo la tinta dentro del recuadro de cada
+celda: una celda marcada tiene una mancha oscura pequeña, una vacía no tiene
+ninguna. Contrastado contra la imagen fila por fila, la separación es limpia —
+0.005 de píxeles oscuros frente a 0.000— así que el umbral no está en el filo de
+nada.
+
+**2. Un valor centrado vuelve partido entre columnas.** «108 HP @ 4,500 rpm»,
+escrito una sola vez en mitad de la tabla, llega troceado en dos celdas
+contiguas. Aquí hubo una iteración que merece anotarse: el primer intento agrupó
+por el hueco entre **celdas** y no separó nada, porque los recuadros que Textract
+da para una celda son los de la rejilla y las celdas contiguas se tocan. Los
+huecos hay que medirlos entre las **palabras**, y ahí la separación es de dos
+órdenes de magnitud: 0.002 dentro de un mismo valor, 0.19 entre dos valores
+distintos.
+
+Y para saber a qué columna pertenece cada grupo, una regla de dos distancias: se
+compara la distancia del valor al centro del área de columnas con su distancia a
+la columna más cercana. «4,113» escrito en mitad de la tabla queda a 0.014 del
+centro del área y a 0.049 de cualquier columna: significa «igual en todas las
+versiones». «MT (5 vel.)» escrito bajo las manuales queda más cerca de su
+columna. La primera versión de esa regla exigía que el valor ocupara más de una
+celda, y por eso atribuía `Largo (mm): 4,113` a una sola versión — un error de
+atribución, es decir, del tipo exacto que había que eliminar.
+
+**Por qué no un modelo de visión.** Habría leído la página entera sin esfuerzo,
+viñetas incluidas. Se descartó por una razón de principio: el proyecto se
+sostiene sobre que cada afirmación sea rastreable hasta un documento, y un modelo
+que *transcribe* puede completar una cifra ilegible con una plausible. Un error
+de OCR es visible y reproducible; una alucinación en la capa de extracción es
+indistinguible de un dato real y contamina el corpus de forma permanente. La
+capa que fabrica la evidencia es el último sitio donde conviene poner algo que
+inventa.
+
+### Tres guardas que salieron de ejecutar el lote de verdad
+
+Nada de esto apareció en el diseño; apareció al lanzar 130 páginas seguidas.
+
+1. **Los diagnósticos se perdían justo al fallar.** El reporte solo propagaba
+   los avisos de una transcripción con texto, así que un lote entero podía
+   volver vacío diciendo «no dio resultado» sin nombrar la causa. La causa era
+   `ConnectionClosedError`: las operaciones síncronas de Textract tienen un
+   límite de transacciones por segundo bajo y cien páginas seguidas lo superan.
+   Se arregló propagando siempre los avisos y configurando reintentos
+   adaptativos, que reducen el ritmo cuando el servicio lo pide en vez de dormir
+   a ciegas entre páginas.
+2. **Un resultado parcial se cacheaba.** Dos fichas quedaron con su primera
+   página perdida y guardadas así, lo que convierte un fallo de red pasajero en
+   la versión definitiva del documento: nadie volvería a mirarlo. Ahora una
+   transcripción incompleta no se cachea nunca.
+3. **La densidad como criterio de evidencia.** Los siete PDF de Renault se
+   transcribieron sin error y produjeron 900 caracteres desde catorce páginas.
+   Mirándolos: no son fichas técnicas, son un folleto de ubicaciones de
+   cargadores, idéntico entre modelos. El OCR hizo bien su trabajo; no hay más
+   ahí. Indexarlos habría metido siete documentos casi idénticos que solo pueden
+   ganar una recuperación por error y hacer que el agente cite
+   «ficha-tecnica-renault-duster» para hablar de cargadores. Una transcripción
+   por debajo de 200 caracteres por página se descarta y se dice por qué. El
+   umbral vuelve a caer en mitad de dos órdenes de magnitud: 7.500-10.000
+   caracteres por página cuando hay contenido, 60 cuando no.
+
+También hay caché, y no como optimización: con un motor que cobra por página,
+ajustar el troceado y relanzar `make corpus` volvería a pagar el corpus entero.
+La clave va por contenido del archivo, así que un PDF que cambia se retranscribe
+y uno que solo se movió de carpeta no. Y antes de gastar nada, el script enseña
+cuántas páginas va a transcribir y cuánto cuesta.
+
+### El resultado
+
+| | Antes | Después |
+|---|---|---|
+| Documentos indexados | 101 | 123 |
+| Fragmentos | 1.053 | 1.244 |
+| PDF descartados en silencio | 30 | 0 |
+
+Rescatados: 6 por descifrado, 16 por transcripción con estructura. Descartados a
+propósito y con motivo: 7 (no eran fichas) y 1 (archivo vacío).
+
+La prueba de que la rejilla sobrevivió el viaje entero —imagen, Textract,
+geometría, fragmento, recuperación, cita— es la respuesta a «¿qué versiones del
+MG3 llevan quemacocos?»:
+
+> Quemacocos eléctrico de un solo toque: disponible **solo en la versión EXCITE
+> CVT** [ficha-tecnica-mg-mg3--002.md]. Potencia: 108 HP @ 4,500 rpm, que
+> aplicaría a las versiones COOL MT, STYLE MT, STYLE CVT y EXCITE CVT
+> [ficha-tecnica-mg-mg3--001.md].
+
+Las dos afirmaciones son correctas contra el PDF original, y la diferencia entre
+ellas —una vale para una versión, la otra para las cuatro— es justo lo que un
+OCR lineal habría borrado.
+
+Cada fragmento lleva además de dónde salió su texto: `origen_texto: ocr:tablas`
+con su confianza, o `cifrado_original: true`. Una cita que procede de una
+transcripción automática no vale lo mismo que una del original, y quien audite
+la respuesta tiene derecho a saberlo sin abrir el PDF.
+
+---
+
 ## Conclusión
 
 Cada decisión tomada buscó el equilibrio entre **rigor técnico bancario** y
