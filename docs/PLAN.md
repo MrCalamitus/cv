@@ -1,4 +1,4 @@
-# Plan de Construcción — `luis-cv`
+# Plan de Construcción — `rag-agent`
 
 Agente RAG compatible con Open Responses sobre AWS Bedrock + ECS Fargate.
 
@@ -26,7 +26,7 @@ Ya no se discuten. Cambiar alguna implica revisar este plan.
 | 9 | Corpus: CV, título, cédulas, constancias de cursos, notas MD | — |
 | 10 | Modelos con acceso concedido: familia Anthropic y familia GPT en Bedrock | — |
 | 11 | Perfil de despliegue: `luis`, como variable con default | — |
-| 12 | Prefijo y tag de toda la infra: `luis-cv` | — |
+| 12 | Prefijo y tag de toda la infra: `rag-agent` | — |
 
 ## Decisiones abiertas (bloquean etapas concretas)
 
@@ -42,19 +42,19 @@ Ya no se discuten. Cambiar alguna implica revisar este plan.
 ## Estructura del repositorio
 
 ```
-luis-cv/
+rag-agent/
 ├── README.md                      # cómo desplegar y cómo probar
 ├── BITACORA.md                    # se actualiza al cerrar cada etapa
 ├── docs/
 │   ├── contrato-open-responses.md # el contrato normativo
 │   └── arquitectura.md            # capas, puertos y adaptadores
-├── src/luis_cv/                   # arquitectura hexagonal
+├── src/rag_agent/                   # arquitectura hexagonal
 │   ├── domain/                    # reglas puras: prompts, redacción, eventos
 │   ├── application/               # casos de uso y puertos
 │   ├── infrastructure/
 │   │   ├── inbound/http/          # FastAPI, esquema, SSE, auth, rate limit
 │   │   └── outbound/              # bedrock/ · local/ · telemetry/
-│   └── main.py                    # uvicorn luis_cv.main:app
+│   └── main.py                    # uvicorn rag_agent.main:app
 ├── tests/
 │   ├── contract/                  # casos A y B del contrato
 │   ├── rag/                       # casos C
@@ -168,7 +168,7 @@ la causa número uno de RAG malo sobre corpus pequeños.
 
 **Objetivo:** recuperación funcionando y auditable.
 
-1. Bucket `luis-cv-corpus-<account_id>`, cifrado, acceso público bloqueado,
+1. Bucket `rag-agent-corpus-<account_id>`, cifrado, acceso público bloqueado,
    versionado activo.
 2. **Decidir el vector store (decisión B) antes de crear nada.** OpenSearch
    Serverless cobra un mínimo de OCUs corriendo de forma continua, existan o no
@@ -177,7 +177,7 @@ la causa número uno de RAG malo sobre corpus pequeños.
    pgvector, o Pinecone. Comparar el costo mensual estimado y **escribir la
    comparación en la bitácora** — es exactamente el tipo de análisis que el
    reto premia.
-3. Crear la KB (`luis-cv-kb`), data source apuntando al bucket, estrategia de
+3. Crear la KB (`rag-agent-kb`), data source apuntando al bucket, estrategia de
    chunking de E2.
 4. Ingesta. Verificar en la consola que cada documento produjo fragmentos, no
    cero.
@@ -202,7 +202,7 @@ producto más importante del proyecto.
    la evidencia no alcanza, decir que no consta.
 2. `redaction.py` — enmascarado de cédula, CURP y RFC en la salida (§6.2 del
    contrato) y en los logs.
-3. Guardrail de Bedrock `luis-cv-guardrail`: filtro de PII, tema prohibido de
+3. Guardrail de Bedrock `rag-agent-guardrail`: filtro de PII, tema prohibido de
    suplantación de identidad, y verificación de fundamentación contextual
    contra alucinaciones.
 4. Probar los adversariales: certificación inexistente, año equivocado,
@@ -218,7 +218,7 @@ credencial inventada invalida la etapa.
 **Objetivo:** que lo de E1–E4 corra en AWS con el streaming intacto.
 
 1. Dockerfile multi-etapa, usuario no-root, `HEALTHCHECK` a `/healthz`.
-2. `ecr.tf` — repo `luis-cv/api` con escaneo de imágenes al subir.
+2. `ecr.tf` — repo `rag-agent/api` con escaneo de imágenes al subir.
 3. `network.tf` — VPC, subredes públicas y privadas, y **VPC endpoints
    (PrivateLink) para `bedrock-runtime`, `bedrock-agent-runtime`, S3, ECR,
    Secrets Manager y CloudWatch Logs**.
@@ -254,7 +254,7 @@ ALB es el modo de falla clásico de SSE y no se ve en local.
    Es la traza que demuestra el argumento de auditoría del RAG.
 3. Métricas propias: `TimeToFirstToken`, `RetrievalLatency`, `ChunksRetrieved`,
    `GroundingFailures`, `ErrorRate`.
-4. Dashboard `luis-cv-prod` y una alarma sobre p95 de TTFT.
+4. Dashboard `rag-agent-prod` y una alarma sobre p95 de TTFT.
 
 **Salida:** pasan D1–D7. D5 (ningún log contiene PII) se verifica leyendo los
 logs reales, no asumiendo.

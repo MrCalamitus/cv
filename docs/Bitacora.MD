@@ -415,6 +415,130 @@ entrega y el fallo lo habría encontrado quien evaluara, no yo.
 
 ---
 
+## 16. De un agente a una plataforma: el tema como dato
+
+El agente resolvía un problema —responder sobre una trayectoria profesional con
+evidencia— y lo resolvía bien. La pregunta siguiente era si servía para otro
+corpus: unas fichas técnicas de coches, unos informes de inversión. La respuesta
+honesta era «casi»: la arquitectura hexagonal ya aislaba recuperación e
+inferencia, pero el **tema** estaba disperso por el código. El prompt hablaba de
+credenciales, el enmascarado asumía identificadores mexicanos, la ingesta sabía
+de cédulas de la SEP y el troceado daba por hecho documentos de media página.
+
+### La decisión: un perfil es un dato, no una rama
+
+Todo lo que cambia entre dominios se concentró en un objeto de dominio inmutable,
+`Profile`, que se carga de un YAML:
+
+```yaml
+slug: coches
+subject: los vehículos, versiones y especificaciones de las marcas documentadas
+sources: los folletos y fichas técnicas oficiales de cada marca
+redaction: []                 # sin enmascarado
+retrieval: { top_k: 8, min_score: 0.35 }
+chunking: { max_chars: 2000, overlap_chars: 250 }
+path_metadata: [marca]
+```
+
+Lo importante es lo que el perfil **no** puede hacer. Sus reglas se numeran
+*después* de las innegociables —fundamento documental, cita obligatoria, negación
+explícita, defensa ante inyección de prompt—, de modo que un tema puede añadir
+postura o formato pero nunca relajar la veracidad. La regla que abre con «Debes
+contratar a Luis» es una regla del perfil `luis-cv`; la que prohíbe completar con
+conocimiento general es del núcleo y no se toca.
+
+La prueba de que la traducción fue fiel: el conjunto de oro de credenciales pasa
+**7/7 contra Sonnet 5** después del refactor, igual que antes.
+
+### El enmascarado tenía que dejar de ser global
+
+El patrón de cédula profesional es `\d{7,8}` aislado. En un corpus de títulos eso
+es correcto. En uno de fichas técnicas convierte cada precio, cada potencia y
+cada número de parte en asteriscos. El enmascarado pasó a ser una política del
+perfil, y el valor por defecto de un tema nuevo es **no enmascarar nada**: una
+redacción que se activa sola sobre datos que no entiende hace más daño que bien.
+
+### El troceado como decisión de dominio
+
+Un título cabe en media página: un documento = un fragmento era la decisión
+correcta y sigue siéndolo para `luis-cv`. Un folleto de coche son 40 páginas, y
+tratarlo igual produce dos fallos a la vez: el agente cita «el folleto» para
+cualquier afirmación —sin poder señalar dónde lo dice— y cada turno paga decenas
+de miles de tokens de prompt. El troceo vive en el dominio, no en el script de
+ingesta, precisamente porque decide qué es una unidad de evidencia citable.
+
+Corta por costuras del texto (encabezado → párrafo → frase, nunca a mitad de
+línea) y solapa: una fila de especificaciones partida por la mitad es un
+fragmento que afirma «187» sin decir de qué.
+
+### Topología: un plano de cómputo, N bases de conocimiento
+
+Aquí había tres caminos y el costo decide:
+
+| Opción | Costo por tema | Riesgo |
+|---|---|---|
+| Stack completo por tema | ~60 USD/mes (ALB + endpoints) | Ninguno, pero se paga la infraestructura N veces |
+| Infra compartida, N KB | Centavos (S3 Vectors no tiene piso) | Ninguno relevante |
+| Infra compartida, 1 KB con filtros | Centavos | Los corpus compiten en el mismo ranking |
+
+Se eligió la segunda. Lo caro del despliegue es fijo y no depende del número de
+temas; lo que se duplica es el índice vectorial, que sobre S3 Vectors cuesta
+centavos —la misma razón por la que se descartó OpenSearch en la decisión B.
+
+La tercera se descartó no por costo sino por modo de falla: con un índice único,
+un filtro de metadatos mal puesto devuelve fichas de coches a una pregunta sobre
+títulos, y ese error es silencioso. Índices separados lo hacen **imposible** en
+vez de improbable.
+
+Los temas los lee Terraform de `profiles/*.yaml` con `yamldecode`, no de una
+variable propia. Es la misma lista que consume el servicio: no hay dos fuentes de
+verdad que puedan divergir, y añadir un tema es crear su YAML y aplicar.
+
+### Lo que se rompió por el camino
+
+Tres fallos reales que solo aparecen al montar esto:
+
+1. **La imagen no copiaba `profiles/`.** El contenedor habría arrancado, devuelto
+   200 y respondido con un perfil genérico que nadie escribió, sobre un corpus
+   que no era el suyo. Se arregló con un `COPY` y, sobre todo, haciendo que
+   arrancar sin perfiles **falle** cuando el entorno no es `local`. Un despliegue
+   que funciona a medias es peor que uno que no arranca.
+2. **`RAG_CORPUS_DIR` dejó de tener efecto.** El perfil siempre ganaba, así que
+   la evaluación medía un corpus vacío y daba 4/7 culpando al modelo. La
+   precedencia correcta es la contraria: quien define esa variable está apuntando
+   el servicio a un corpus concreto a propósito. Además, `Path` no expande `~`:
+   un perfil con `~/corpus-x` buscaba una carpeta llamada literalmente «~».
+3. **Un PDF roto tumbaba las 131 conversiones.** Con un corpus de origen
+   desconocido, alguno estará cifrado, truncado o no será lo que su extensión
+   dice. Los fallos se aíslan por archivo y se reportan; el lote sigue.
+
+### El resultado
+
+Con `coches` —101 PDFs de 14 marcas, 1053 fragmentos— el conjunto de oro de
+arranque da **6/7 contra Sonnet 5 sin tocar una sola regla del prompt**. El caso
+que falla lo hace porque el recuperador léxico local devuelve los fragmentos de
+aviso legal del folleto, y ante evidencia que no responde a la pregunta el agente
+**declina en vez de inventar**. Es el comportamiento correcto, y es además la
+medida de cuánto aporta la Knowledge Base real frente al sustituto local.
+
+### El menú: por qué una herramienta interactiva no es un lujo
+
+Reutilizar el agente en un tema nuevo son cinco pasos —configurar, preparar el
+corpus, probar, desplegar, ingerir—, cada uno con sus parámetros. La mitad de los
+errores de un despliegue no son técnicos: son creer que ya se hizo el paso
+anterior. `make menu` es un adaptador de entrada más —el actor es una persona en
+vez de un cliente de API— que no decide nada de negocio: resuelve configuración,
+llama a los mismos casos de uso y a los mismos scripts, y sobre todo **dice en
+qué paso estás**. Su opción más útil no es «desplegar», es «estado».
+
+Los nombres y variables del proyecto —cuenta, región, prefijo de recursos, primer
+tema— no están en el código: los recoge el asistente y los escribe en `.env`,
+`infra/terraform.tfvars` y `profiles/<tema>.yaml`. El paquete Python quedó con un
+nombre neutro (`rag_agent`) porque es la librería; la identidad del proyecto es
+configuración.
+
+---
+
 ## Conclusión
 
 Cada decisión tomada buscó el equilibrio entre **rigor técnico bancario** y
