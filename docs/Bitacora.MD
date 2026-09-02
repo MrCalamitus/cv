@@ -685,6 +685,126 @@ la respuesta tiene derecho a saberlo sin abrir el PDF.
 
 ---
 
+## 18. ¿Sirve esto para cualquier PDF? La respuesta honesta era «no»
+
+La pregunta era si el pipeline vale para cualquier corpus. Contestarla exigía
+mirar el código y no la intención, y salieron tres niveles de problema. El
+primero fue el peor, y estaba en la parte que parecía más inocente.
+
+### El código que borraba las cifras
+
+`limpiar()` tenía dos heurísticas escritas pensando en folletos: descartar
+números sueltos —folios— y colapsar líneas idénticas consecutivas —pies
+repetidos—. Sobre una ficha de coche no cuestan nada. Sobre un estado de
+resultados extraído con etiqueta y valor en líneas separadas, que es como muchos
+PDF disponen sus tablas:
+
+```
+ANTES:   Ingresos · 125 · Costos · 87 · Margen · 38 · Provisiones · 0 · 0 · Impuestos · 12
+DESPUÉS: Ingresos · Costos · Margen · Provisiones · Impuestos
+```
+
+El documento sobrevive con todas sus etiquetas y **ninguna de sus cifras**. Y no
+lo detecta nada: la guarda de densidad ve caracteres de sobra en las etiquetas, y
+la comprobación de si hace falta OCR usa la misma función, así que el documento
+tampoco se manda a transcribir. Entra al corpus completo, parece bien, y no puede
+responder una sola pregunta.
+
+Sobre el corpus de coches el daño era cero. Ese es justo el problema: una
+heurística que no cuesta nada en el corpus donde se escribió y borra los datos en
+el siguiente.
+
+**El arreglo fue mirar las dos señales que sí distinguen basura de dato, y las
+dos son posicionales.** `limpiar()` ya recibía las páginas por separado y tiraba
+esa información al aplanarlas:
+
+- Un folio está en el **borde** de su página **y forma una serie creciente**. La
+  posición sola no basta: un balance puede acabar una página en «0». Exigir la
+  serie cuesta cuatro líneas y elimina el falso positivo entero.
+- Un pie corrido se repite **a lo largo del documento**, en el borde, y no es un
+  número. Que dos líneas estén seguidas no dice nada.
+
+Del pie corrido se conserva además la primera aparición. Suele ser el título o el
+modelo —«MAZDA2 SEDÁN 2026»— y borrarlo de todas partes deja los fragmentos del
+medio del documento sin decir de qué hablan. Una vez basta; cuatrocientas treinta
+y nueve —las del manual del Corvette— no.
+
+Medido sobre el corpus real: 55 documentos ganan texto (datos que antes se
+perdían) y 15 pierden (repetición de verdad), con 31.000 caracteres netos menos
+de ruido.
+
+### El intérprete que solo entendía una forma de tabla
+
+El render de tablas asumía fila 1 = encabezados y columna 1 = etiqueta, y sobre
+esa premisa **redactaba afirmaciones**: «solo en X», «vale para todas». Eso es
+correcto en una ficha comparativa y es inventarse el significado de la rejilla en
+cualquier otra. Un balance con encabezados de dos niveles habría recibido frases
+perfectamente redactadas y falsas. Además el módulo decía literalmente
+«versiones» — vocabulario de coches incrustado en código genérico, que en una
+tabla trimestral diría «en todas las versiones (Q1, Q2)».
+
+Ahora la tabla tiene que **demostrar su forma** antes de que se interprete:
+columna de etiquetas, dos o más encabezados y una fracción alta de celdas de
+valor vacías o marcadas. Una tabla de datos —casi todas las celdas llenas— no
+pasa el filtro, que es exactamente lo que se busca. Sin esa forma se hace un
+volcado sin pérdida donde cada fila lleva sus encabezados dentro, para que un
+corte de troceado no pueda dejar una cifra huérfana de su columna.
+
+Al probarlo sobre el corpus apareció un caso que no estaba en el diseño: Textract
+marca como TABLE cualquier maquetación en rejilla, incluida una plana de folleto
+con tres bloques de texto en fila. Tomar su primera fila como encabezados
+producía cosas como «1030 km de autonomía combinada: 3 filas de asientos» — un
+emparejamiento entre dos textos que en el documento no tienen ninguna relación.
+No es un formato feo: es una afirmación falsa. Un encabezado de verdad es una
+etiqueta corta, y comprobarlo bastó.
+
+### La detección de viñetas dejó de dar por hecha su calibración
+
+Los umbrales de tinta se midieron sobre un corpus. Funcionan ahí; en otro, un
+icono pequeño o un sombreado se leen como marca y el agente afirma una
+característica que el documento no afirma — el error en la dirección peligrosa.
+
+Ahora el umbral se calibra **por tabla**: se miden todas las celdas sin texto y
+se exige una separación bimodal, un hueco ancho entre el grupo «vacías» y el
+grupo «marcadas». En las fichas de coches ese hueco es de 0.000 frente a 0.005 y
+la detección sigue igual de fina; lo que cambia es que ahora se comprueba en cada
+documento en vez de darse por supuesto. Sin hueco claro no se emite ninguna
+marca. Y una mancha solo cuenta si es pequeña y centrada: un sombreado que cubre
+la celda no es una viñeta.
+
+### Lo que sigue sin ser genérico
+
+Conviene decirlo con la misma claridad. Solo se pide `TABLES`: sin `LAYOUT` no
+hay orden de lectura garantizado en prosa a dos columnas —el formato de un
+informe de análisis— y en una página mixta las líneas sueltas salen antes que las
+tablas. No hay `FORMS` para facturas. El idioma no se valida contra lo que el
+motor soporta. Y un gráfico transcrito devuelve las etiquetas de sus ejes, que
+parecen dato sin serlo.
+
+Está anotado y no disimulado: son las fases que se abordarán cuando se sepa qué
+forma tienen los PDF del corpus de inversiones.
+
+### El precio de una decisión anterior
+
+El caché guarda el **texto ya redactado**, no la respuesta cruda del motor. Cada
+cambio en el render obliga a subir la versión del formato y a volver a
+transcribir: dos euros y unos minutos por iteración. Se pagó dos veces en este
+trabajo. Guardar la respuesta cruda haría gratis iterar sobre el render, a cambio
+de bastante disco; queda anotado como la mejora que hará falta si las fases
+pendientes tocan otra vez esta capa.
+
+### Resultado
+
+Sin regresión: `coches` sigue en 9/10 y `luis-cv` en 7/7 contra el modelo real. El
+MG3 sigue diciendo que el quemacocos es **solo de la versión EXCITE CVT** y que
+los 108 HP valen para las cuatro. El corpus pasa de 1.244 a 1.211 fragmentos, y
+esos 33 de menos son repetición de encabezados que antes se indexaba.
+
+Lo que cambió no se ve en los números: cambió qué pasa cuando llegue un PDF que
+nadie ha mirado.
+
+---
+
 ## Conclusión
 
 Cada decisión tomada buscó el equilibrio entre **rigor técnico bancario** y
