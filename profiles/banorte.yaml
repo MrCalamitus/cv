@@ -1,0 +1,89 @@
+# Perfil: reportes trimestrales a inversionistas de Grupo Financiero Banorte.
+#
+# Es el caso que rompió el supuesto de la ingesta. `autos` son fichas escaneadas
+# —sin capa de texto, el OCR entra solo—; estos son PDF nativos de 85 páginas
+# con capa de texto completa y una tabla en casi cada página. La capa nativa los
+# lee "bien" y por eso nadie sospechaba: lo que devuelve es la tabla aplanada en
+# una columna de cifras sin fila ni encabezado. Medido sobre 2T26: 84 de 85
+# páginas llevan tabla.
+#
+# Por eso `ocr.paginas: todas`, el ajuste que hace que el motor de tablas corra
+# aunque haya texto extraíble.
+
+slug: banorte
+name: Reportes trimestrales de GFNorte
+
+subject: >-
+  los resultados financieros trimestrales de Grupo Financiero Banorte: utilidad,
+  márgenes, cartera, captación, indicadores de riesgo y capitalización
+sources: los reportes trimestrales a inversionistas publicados por GFNorte
+
+decline_phrase: "Eso no consta en los reportes disponibles."
+
+extra_rules:
+  - >-
+    Toda cifra financiera pertenece a un periodo. Al darla, di siempre a cuál
+    (2T26, 1S25, acumulado del año). Una cifra sin su periodo es tan engañosa
+    como una inventada, y en una serie trimestral el lector no puede deducirlo.
+  - >-
+    Distingue el Grupo del Banco. Muchos indicadores —ROE, MIN, utilidad neta—
+    se reportan para ambos con valores distintos, y confundirlos cambia la
+    conclusión. Si el fragmento no lo aclara, dilo en vez de elegir uno.
+  - >-
+    Las variaciones vienen etiquetadas como «vs. trimestre anterior» o «vs. mismo
+    trimestre del año anterior». No las intercambies ni calcules una a partir de
+    la otra: el reporte ya trae ambas y no coinciden.
+  - >-
+    Un dato leído de una gráfica es una estimación, no una cifra publicada.
+    Cuando el fragmento venga marcado como lectura de gráfica, preséntalo como
+    aproximado y remite a la tabla correspondiente si existe.
+
+# Sin enmascarado: aquí todo número es una cifra financiera pública. Un patrón
+# de documento de identidad convertiría en asteriscos la utilidad del trimestre.
+redaction: []
+
+retrieval:
+  # Una respuesta financiera suele combinar la tabla del indicador, su nota al
+  # pie y el párrafo narrativo que lo explica: tres fragmentos distintos.
+  top_k: 8
+  min_score: 0.35
+
+ocr:
+  # Conserva la rejilla: en una tabla trimestral es lo único que preserva a qué
+  # periodo pertenece cada cifra.
+  motor: tablas
+  # El cambio que arregla este corpus. Con `sin-texto` (el valor histórico) el
+  # motor no correría nunca aquí: estos PDF tienen ~258.000 caracteres de capa
+  # de texto, muy por encima de cualquier umbral de "documento ilegible".
+  paginas: todas
+  min_chars: 200
+  dpi: 200
+  # Los trimestrales rondan las 85 páginas. Con el tope de 40 por defecto se
+  # perdería más de la mitad del documento sin más aviso que una línea en el
+  # reporte.
+  max_paginas: 100
+  idioma: spa
+  # En una ficha de coches las columnas son versiones; aquí son periodos.
+  columnas: periodos
+
+chunking:
+  # Más corto que en `autos`: la fila de una tabla financiera ya es autocontenida
+  # («Utilidad Neta: 14,618 (2T25); 15,550 (2T26)»), así que un fragmento grande
+  # mezcla indicadores que no se preguntan juntos y diluye la recuperación.
+  max_chars: 1800
+  overlap_chars: 200
+  min_chars_to_split: 2400
+
+# Con `corpus/banorte/2T26.pdf` el fragmento sale con `emisora=banorte`.
+path_metadata: [emisora]
+
+banned_markers: []
+
+# Material de relaciones con inversionistas: se publica para que se lea.
+documentos:
+  por_defecto: publico
+  expone: [publico]
+
+corpus:
+  source: corpus/banorte
+  prepared: .corpus-preparado/banorte
