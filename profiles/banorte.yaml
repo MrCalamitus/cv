@@ -45,7 +45,7 @@ redaction: []
 retrieval:
   # Una respuesta financiera suele combinar la tabla del indicador, su nota al
   # pie y el párrafo narrativo que lo explica: tres fragmentos distintos.
-  top_k: 8
+  top_k: 20
   min_score: 0.35
 
 ocr:
