@@ -15,7 +15,7 @@ Ya no se discuten. Cambiar alguna implica revisar este plan.
 
 | # | Decisión | Fuente |
 |---|---|---|
-| 1 | Sin frontend. Solo endpoint | Bitácora §1 |
+| 1 | ~~Sin frontend. Solo endpoint~~ — revertida, ver nota abajo | Bitácora §1 |
 | 2 | Motor: Amazon Bedrock, no OpenRouter | Bitácora §2 |
 | 3 | Cómputo: ECS Fargate + ALB | Bitácora §3 |
 | 4 | Sin LangChain/LlamaIndex. `boto3` + Bedrock KB | Bitácora §4 |
@@ -27,6 +27,12 @@ Ya no se discuten. Cambiar alguna implica revisar este plan.
 | 10 | Modelos con acceso concedido: familia Anthropic y familia GPT en Bedrock | — |
 | 11 | Perfil de despliegue: `luis`, como variable con default | — |
 | 12 | Prefijo y tag de toda la infra: `rag-agent` | — |
+
+> **Nota sobre la decisión 1 (revertida).** El servicio sigue siendo solo un endpoint:
+> no sirve HTML, no monta estáticos y no monta CORS. Lo que se añade es una UI **aparte**,
+> en `ui/`, con su propio ciclo de vida y su propio despliegue, que consume la API como
+> cualquier otro cliente. La decisión valía para el servicio y ahí sigue en pie; lo que
+> deja de valer es para el repositorio. Ver [`plan-ui-astro.md`](plan-ui-astro.md).
 
 ## Decisiones abiertas (bloquean etapas concretas)
 
