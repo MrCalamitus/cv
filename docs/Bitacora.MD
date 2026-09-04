@@ -1030,11 +1030,17 @@ Banco Mercantil del Norte | 11,761 | 11,705 | 12,391 | ... | 22,793 | 24,095
 
 ### Lo que sigue sin estar resuelto
 
-Con la misma claridad que la §18. `LAYOUT` ya se pide junto a `TABLES` —es
-gratis en esa combinación— pero **las regiones de figura todavía no se aíslan del
-texto corrido**: un fragmento puede contener aún `220 210 200 (8.5%) +7.6%`, las
-etiquetas de eje de una gráfica, indistinguibles de cifras financieras para el
-índice. Es la contaminación que este trabajo identificó y no alcanzó a cerrar.
+Con la misma claridad que la §18. **`LAYOUT` sigue sin pedirse**: `_analizar`
+manda `FeatureTypes=["TABLES"]` y nada más. Es gratis combinado con `TABLES`, y
+es lo que hace falta para lo que queda pendiente: **las regiones de figura no se
+aíslan del texto corrido**, así que un fragmento puede contener aún
+`220 210 200 (8.5%) +7.6%` —las etiquetas de eje de una gráfica— indistinguibles
+de cifras financieras para el índice. La §18 ya lo anotó y este trabajo lo
+confirmó sobre el corpus real sin llegar a cerrarlo.
+
+Mientras no se aísle, la excepción de visión descrita arriba **no está conectada
+a esta ingesta**: se validó con los scripts del laboratorio, no desde
+`prep_corpus`. El perfil no tiene todavía forma de pedirla.
 
 Los encabezados de dos niveles tampoco se colapsan: `Var. Vs.` sobre `1T26` sale
 como `Var.: 1T26 | Vs.: 2T25` en vez de `Var. Vs. 1T26`.
